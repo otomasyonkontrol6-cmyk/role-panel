@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Röle Paneli</title>
+<style>
+  :root{--bg:#e9eee8;--ink:#1c2a25;--mute:#62736c;--card:#f7f9f6;--line:#cdd7cf;--on:#e0a100;--off:#8a9a92;--ok:#2e7d52;--bad:#b3402f}
+  @media (prefers-color-scheme:dark){:root{--bg:#141c18;--ink:#e6efe9;--mute:#8fa399;--card:#1c2723;--line:#2c3b35;--off:#587066}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Bahnschrift,"Segoe UI",system-ui,sans-serif}
+  main{max-width:560px;margin:0 auto;padding:28px 18px 60px}
+  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}
+  h1{font-size:1.5rem;margin:0;font-weight:600}
+  .dev{display:flex;align-items:center;gap:8px;color:var(--mute);font-size:.9rem}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--bad)}
+  .dot.up{background:var(--ok)}
+  .relay{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:12px}
+  .relay.lit{border-color:var(--on);box-shadow:inset 4px 0 0 var(--on)}
+  .name{font-weight:600}
+  .stat{color:var(--mute);font-size:.88rem}
+  .stat b{color:var(--ink)}
+  .sw{position:relative;width:64px;height:34px;border:0;border-radius:20px;background:var(--off);cursor:pointer;flex:none;transition:background .2s}
+  .sw::after{content:"";position:absolute;top:4px;left:4px;width:26px;height:26px;border-radius:50%;background:#fff;transition:transform .2s}
+  .sw[aria-checked=true]{background:var(--on)}
+  .sw[aria-checked=true]::after{transform:translateX(30px)}
+  .sw:focus-visible,input:focus-visible,.btn:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+  .login{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;display:grid;gap:12px}
+  input{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+  .btn{font:inherit;padding:10px 14px;border:0;border-radius:8px;background:var(--ink);color:var(--bg);cursor:pointer}
+  .link{background:none;color:var(--mute);padding:0;text-decoration:underline}
+  .err{color:var(--bad);min-height:1.4em;font-size:.9rem}
+  .hide{display:none}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Röle Paneli</h1>
+    <div class="dev"><span class="dot" id="dot"></span><span id="devtxt">Cihaz bekleniyor</span></div>
+  </header>
+
+  <div id="loginBox" class="login hide">
+    <input id="email" type="email" placeholder="E-posta" autocomplete="username">
+    <input id="pass" type="password" placeholder="Şifre" autocomplete="current-password">
+    <button class="btn" id="loginBtn">Giriş yap</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <section id="panel" class="hide">
+    <div id="list"></div>
+    <button class="btn link" id="logout">Çıkış yap</button>
+  </section>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+// 1) Firebase konsolundan aldığın değerleri buraya yapıştır
+const firebaseConfig = {
+  apiKey: "AIzaSyCaQI1ZKWfIpo4XnHg_VJ4DDSDB7G_u4LA",
+  authDomain: "test-4eacf.firebaseapp.com",
+  databaseURL: "https://test-4eacf-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "test-4eacf",
+  appId: "1:604042457797:web:7bc49cad0e87532aadf6ac"
+};
+
+// 2) Rölelerin id'si ESP32 kodundaki ile aynı olmalı
+const RELAYS = [
+  { id: "r1", name: "Röle 1" },
+  { id: "r2", name: "Röle 2" },
+  { id: "r3", name: "Röle 3" },
+  { id: "r4", name: "Röle 4" }
+];
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
+const $ = id => document.getElementById(id);
+
+let data = {}, seen = 0;
+
+function render() {
+  $("list").innerHTML = RELAYS.map(r => {
+    const d = data[r.id] || {};
+    const cmd = !!d.cmd, st = !!d.state, pending = cmd !== st;
+    return `<div class="relay ${st ? "lit" : ""}">
+      <div><div class="name">${r.name}</div>
+      <div class="stat">Durum: <b>${st ? "Açık" : "Kapalı"}</b>${pending ? " · cihaz yanıtı bekleniyor" : ""}</div></div>
+      <button class="sw" role="switch" aria-checked="${cmd}" aria-label="${r.name}" data-id="${r.id}"></button>
+    </div>`;
+  }).join("");
+}
+
+$("list").addEventListener("click", e => {
+  const b = e.target.closest(".sw"); if (!b) return;
+  const id = b.dataset.id;
+  set(ref(db, `relays/${id}/cmd`), !(data[id] && data[id].cmd));
+});
+
+function checkDevice() {
+  const up = seen && Date.now() - seen < 15000;
+  $("dot").classList.toggle("up", !!up);
+  $("devtxt").textContent = up ? "ESP32 çevrimiçi" : "ESP32 çevrimdışı";
+}
+setInterval(checkDevice, 3000);
+
+onAuthStateChanged(auth, user => {
+  $("loginBox").classList.toggle("hide", !!user);
+  $("panel").classList.toggle("hide", !user);
+  if (!user) return;
+  onValue(ref(db, "relays"), s => { data = s.val() || {}; render(); });
+  onValue(ref(db, "device/seen"), s => { seen = s.val() || 0; checkDevice(); });
+});
+
+$("loginBtn").onclick = async () => {
+  $("err").textContent = "";
+  try { await signInWithEmailAndPassword(auth, $("email").value, $("pass").value); }
+  catch { $("err").textContent = "E-posta veya şifre hatalı."; }
+};
+$("logout").onclick = () => signOut(auth);
+</script>
+</body>
+</html>
